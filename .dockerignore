@@ -1,0 +1,10 @@
+.venv
+.git
+.idea
+results
+data/partitions
+__pycache__
+*.pyc
+*.log
+.gitignore
+AGENTS.md

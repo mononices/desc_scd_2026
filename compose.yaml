@@ -1,0 +1,10 @@
+services:
+  mesh-app:
+    build: .
+    image: uae-privacy-mesh:latest
+    container_name: uae-privacy-mesh
+    ports:
+      - "7860:7860"
+    volumes:
+      - ./results:/app/results
+    restart: unless-stopped
