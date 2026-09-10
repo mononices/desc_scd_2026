@@ -220,6 +220,11 @@ __marimo__/
 .streamlit/secrets.toml
 
 # project artifacts
-results/
+# results/ is COMMITTED on purpose: judges get the cached grid so the
+# walkthrough and dashboard work instantly without a 10-minute first run.
 data/partitions/
 *.log
+
+# IDE
+.idea/
+.vscode/

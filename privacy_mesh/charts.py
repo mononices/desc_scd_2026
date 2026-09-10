@@ -10,10 +10,13 @@ from privacy_mesh.experiment import CHART_DIR
 
 EPS_LABELS = {None: "∞", 8.0: "8", 4.0: "4", 2.0: "2", 1.0: "1"}
 
-COLOR_UTILITY = "#1f77b4"
-COLOR_ATTACK = "#d62728"
-COLOR_CENTRAL = "#2ca02c"
-COLOR_FL = "#ff7f0e"
+COLOR_UTILITY = "#2a78d6"
+COLOR_ATTACK = "#e34948"
+COLOR_CENTRAL = "#1baf7a"
+COLOR_FL = "#eb6834"
+COLOR_GRID = "#d8d8d4"
+COLOR_INK = "#0b0b0b"
+COLOR_MUTED = "#52514e"
 
 
 def _order(record):
@@ -32,58 +35,75 @@ def _labels(record):
     return f"ε = {EPS_LABELS[record['eps_target']]}"
 
 
+def _tidy(ax):
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    for side in ("left", "bottom"):
+        ax.spines[side].set_color(COLOR_GRID)
+    ax.tick_params(colors=COLOR_MUTED, labelsize=9.5, length=0)
+    ax.set_axisbelow(True)
+    ax.grid(axis="y", color=COLOR_GRID, lw=0.8, alpha=0.7)
+
+
 def tradeoff_figure(records, highlight_key=None):
     items = sorted(records.values(), key=_order)
     xs = np.arange(len(items))
     ticks = [_labels(r) for r in items]
     accs = np.array([r["acc"] for r in items])
     acc_std = np.array([r.get("acc_std", 0.0) for r in items])
-    atts = np.array([r["attack_auc"] for r in items])
-    att_std = np.array([r.get("attack_auc_std", 0.0) for r in items])
-    fig, ax1 = plt.subplots(figsize=(10.5, 5.4))
-    ax1.set_ylabel("model utility — test accuracy", color=COLOR_UTILITY)
-    ax1.set_ylim(0.55, 0.9)
-    ax1.set_xticks(xs)
-    ax1.set_xticklabels(ticks, fontsize=9.5)
-    ax1.errorbar(xs, accs, yerr=acc_std, fmt="-o", color=COLOR_UTILITY, lw=2, ms=7,
-                 capsize=4, zorder=4, label="model accuracy (mean ± std)")
-    ax2 = ax1.twinx()
-    ax2.set_ylabel("privacy risk — membership-inference attack AUC", color=COLOR_ATTACK)
-    ax2.set_ylim(0.35, 0.85)
-    ax2.axhline(0.5, color="#999999", lw=1.2, ls=":")
-    ax2.text(len(items) - 0.05, 0.507, "chance level (AUC = 0.5)", ha="right", va="bottom",
-             fontsize=8, color="#666666")
-    bars = ax2.bar(xs, atts, width=0.5, color=COLOR_ATTACK, alpha=0.7, zorder=3,
-                   yerr=att_std, capsize=4, error_kw={"lw": 1.2, "ecolor": "#7a1414"},
-                   label="attack AUC (mean ± std)")
-    refs = []
-    for rec in records.values():
-        if rec["arch"] == "centralized":
-            ax1.axhline(rec["acc"], color=COLOR_CENTRAL, ls="--", lw=1.3)
-            ax2.axhline(rec["attack_auc"], color=COLOR_CENTRAL, ls="--", lw=1.3)
-            refs.append(plt.Line2D([0], [0], color=COLOR_CENTRAL, ls="--", lw=1.3,
-                                   label="centralised accuracy / attack AUC"))
-        elif rec["arch"] == "federated":
-            ax1.axhline(rec["acc"], color=COLOR_FL, ls=":", lw=1.4)
-            ax2.axhline(rec["attack_auc"], color=COLOR_FL, ls=":", lw=1.4)
-            refs.append(plt.Line2D([0], [0], color=COLOR_FL, ls=":", lw=1.4,
-                                   label="federated (no DP) accuracy / attack AUC"))
+    atts = np.array([100.0 * r["attack_acc"] for r in items])
+    att_std = np.array([100.0 * r.get("attack_acc_std", 0.0) for r in items])
+
+    fig, (ax1, ax2) = plt.subplots(
+        2, 1, figsize=(10.0, 7.0), sharex=True,
+        gridspec_kw={"height_ratios": [1, 1], "hspace": 0.18},
+    )
+
+    ax1.errorbar(xs, accs, yerr=acc_std, fmt="-o", color=COLOR_UTILITY, lw=2, ms=8,
+                 capsize=4, zorder=4, markeredgecolor="white", markeredgewidth=1.4)
+    for x, a, e in zip(xs, accs, acc_std):
+        ax1.annotate(f"{a:.3f}", (x, a + e), textcoords="offset points", xytext=(0, 9),
+                     ha="center", fontsize=9, color=COLOR_INK)
+    ax1.set_ylabel("test accuracy", fontsize=10, color=COLOR_MUTED)
+    ax1.set_ylim(min(accs) - 0.06, max(accs) + 0.055)
+    ax1.set_title("Model utility — higher is better", fontsize=11, color=COLOR_INK,
+                  loc="left", pad=8)
+    _tidy(ax1)
+
+    bars = ax2.bar(xs, atts - 50.0, bottom=50.0, width=0.56, color=COLOR_ATTACK, zorder=3,
+                   yerr=att_std, capsize=4, error_kw={"lw": 1.2, "ecolor": "#7a1414"})
+    for bar in bars:
+        bar.set_linewidth(2)
+        bar.set_edgecolor("white")
+    ax2.axhline(50.0, color=COLOR_MUTED, lw=1.4, zorder=5)
+    ax2.text(-0.42, 49.6, "50% = the attacker is guessing  ·  bars show how far above chance",
+             ha="left", va="top", fontsize=9.5, color=COLOR_MUTED)
+    for x, a, e in zip(xs, atts, att_std):
+        top = max(a, 50.0)
+        ax2.annotate(f"{a:.1f}%", (x, top + e), textcoords="offset points", xytext=(0, 7),
+                     ha="center", fontsize=9.5, color=COLOR_INK)
+    ax2.set_ylabel("attack success rate", fontsize=10, color=COLOR_MUTED)
+    ax2.set_ylim(47.5, max(atts) + 6)
+    ax2.set_title("Privacy risk — how often the attacker correctly identifies a member",
+                  fontsize=11, color=COLOR_INK, loc="left", pad=8)
+    ax2.set_xticks(xs)
+    ax2.set_xticklabels(ticks, fontsize=10, color=COLOR_INK)
+    _tidy(ax2)
+
     if highlight_key:
-        for r in items:
+        for i, r in enumerate(items):
             if r["key"] == highlight_key:
-                ax1.scatter([_order(r)], [r["acc"]], s=190, facecolors="none",
-                            edgecolors="#111111", linewidths=1.8, zorder=6)
-                for bar in bars:
-                    if abs(bar.get_x() + bar.get_width() / 2 - _order(r)) < 1e-9:
-                        bar.set_edgecolor("#111111")
-                        bar.set_linewidth(1.8)
-    handles1, labels1 = ax1.get_legend_handles_labels()
-    handles2, labels2 = ax2.get_legend_handles_labels()
-    fig.legend(handles1 + handles2 + refs, labels1 + labels2 + [r.get_label() for r in refs],
-               loc="lower center", ncol=3, fontsize=8.5, bbox_to_anchor=(0.5, -0.05))
-    fig.suptitle("Privacy vs utility — federated learning with differential privacy (δ = 1e-5)",
-                 fontsize=12.5, y=0.99)
-    fig.tight_layout(rect=(0, 0.09, 1, 0.95))
+                ax1.scatter([i], [r["acc"]], s=230, facecolors="none",
+                            edgecolors=COLOR_INK, linewidths=1.8, zorder=6)
+                bars[i].set_edgecolor(COLOR_INK)
+
+    fig.suptitle("Privacy costs almost nothing here — until it does",
+                 fontsize=14, y=0.975, x=0.5, color=COLOR_INK)
+    fig.text(0.5, 0.925,
+             "Federated learning + DP-SGD across three UAE health authorities  ·  "
+             "3 seeds per configuration  ·  δ = 1e-5",
+             ha="center", fontsize=9.5, color=COLOR_MUTED)
+    fig.tight_layout(rect=(0, 0.01, 1, 0.91))
     return fig
 
 

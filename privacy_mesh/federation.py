@@ -34,7 +34,12 @@ class _Client:
                 eps, delta, self.sample_rate, self.steps_per_round * rounds
             )
             if self.sigma is None:
-                raise RuntimeError("noise calibration failed")
+                raise ValueError(
+                    f"cannot reach epsilon={eps:g} at delta={delta:g} for a client with "
+                    f"{self.n} records over {self.steps_per_round * rounds} DP-SGD steps: "
+                    "the required noise exceeds the calibration range. Raise epsilon, "
+                    "reduce rounds/local_epochs, or use a larger cohort."
+                )
             engine = PrivacyEngine()
             wrapped_model, wrapped_optimizer, dp_loader = engine.make_private(
                 module=self.model,
@@ -118,10 +123,14 @@ def train_federated(entity_train, x_test, y_test, rounds=12, local_epochs=2, bat
             progress((r + 1) / rounds, f"round {r + 1}/{rounds} done - test accuracy {acc:.3f}")
     epsilons = [c.report(delta) for c in clients]
     epsilons = [e for e in epsilons if e is not None]
+    sigmas = [c.sigma for c in clients if c.sigma is not None]
     return {
         "model": global_model,
         "history": history,
         "eps_achieved": float(max(epsilons)) if epsilons else None,
         "eps_mean": float(np.mean(epsilons)) if epsilons else None,
-        "sigma": clients[0].sigma,
+        "eps_per_client": [float(e) for e in epsilons],
+        "sigma": float(max(sigmas)) if sigmas else None,
+        "sigma_per_client": [float(s) for s in sigmas],
+        "client_sizes": [int(c.n) for c in clients],
     }

@@ -16,13 +16,12 @@ RUN pip install -r requirements.txt
 
 COPY data ./data
 COPY privacy_mesh ./privacy_mesh
-COPY app.py README.md ./
-
-RUN mkdir -p results
+COPY results ./results
+COPY app.py README.md START_HERE.md ./
 
 EXPOSE 7860
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=900s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:7860', timeout=5)" || exit 1
 
 CMD ["python", "app.py"]

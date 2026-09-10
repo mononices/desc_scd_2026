@@ -27,24 +27,35 @@ EPS_CHOICES = {"∞ (no DP)": None, "8": 8.0, "4": 4.0, "2": 2.0, "1": 1.0}
 
 
 def _fmt(value, digits=4):
-    return "-" if value is None else f"{value:.{digits}f}"
+    if value is None or isinstance(value, str):
+        return "-"
+    return f"{value:.{digits}f}"
 
 
 def _metrics_df(record):
     n = record.get("n_reps", 1)
     spread = " (mean ± std over %d runs)" % n if n > 1 else ""
+    eps_per = record.get("eps_per_client")
+    sig_per = record.get("sigma_per_client")
     rows = [
         ("Architecture", record["arch_label"]),
         ("Privacy budget ε (per entity)", "∞" if record["eps_target"] is None else f"{record['eps_target']:g}"),
         ("Achieved ε (Rényi DP accounting)", "∞" if record["eps_achieved"] is None
          else _fmt(record["eps_achieved"], 2)),
-        ("Noise multiplier σ", "-" if record["sigma"] is None else _fmt(record["sigma"], 2)),
+        ("Achieved ε per entity", "-" if not eps_per else ", ".join(f"{e:.2f}" for e in eps_per)),
+        ("Noise multiplier σ per entity", "-" if not sig_per else ", ".join(f"{s:.2f}" for s in sig_per)),
         ("δ", f"{record['delta']:g}"),
+        ("— utility —", ""),
         ("Test accuracy" + spread, _fmt(record["acc"])),
         ("Test AUC", _fmt(record["auc"])),
+        ("Training-set accuracy", _fmt(record.get("train_acc"))),
+        ("Generalisation gap (train − test)", _fmt(record.get("gap"))),
+        ("— privacy risk —", ""),
+        ("Attack accuracy (50% = chance)", _fmt(record["attack_acc"])),
         ("Attack AUC (membership inference)" + spread, _fmt(record["attack_auc"])),
-        ("Attack accuracy", _fmt(record["attack_acc"])),
-        ("Attack candidate pool", str(record["n_candidates"])),
+        ("Attack TPR @ 1% FPR (1% = chance)", _fmt(record.get("tpr_at_1pct_fpr"))),
+        ("Attack candidate pool (balanced)", str(record["n_candidates"])),
+        ("— run —", ""),
         ("Training records (all entities)", str(record["n_train"])),
         ("Aggregation rounds", str(record["rounds"])),
         ("Mean runtime per run", f"{record['time_s']} s"),
@@ -53,7 +64,9 @@ def _metrics_df(record):
 
 
 def _render(summaries, highlight=None):
-    files = {}
+    files = {"trade": None}
+    if not summaries:
+        return files
     fig = charts.tradeoff_figure(summaries, highlight_key=highlight)
     files["trade"] = charts.save_figure(fig, "tradeoff.png")
     if highlight and highlight in summaries:

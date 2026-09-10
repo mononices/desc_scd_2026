@@ -1,7 +1,6 @@
 .venv
 .git
 .idea
-results
 data/partitions
 __pycache__
 *.pyc
