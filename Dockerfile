@@ -17,7 +17,7 @@ RUN pip install -r requirements.txt
 COPY data ./data
 COPY privacy_mesh ./privacy_mesh
 COPY results ./results
-COPY app.py README.md START_HERE.md ./
+COPY app.py README.md ./
 
 EXPOSE 7860
 

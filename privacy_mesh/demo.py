@@ -4,11 +4,11 @@ import pandas as pd
 from privacy_mesh import charts, experiment as exp
 
 DESC = """
-## UAE Privacy Mesh — privacy-preserving analytics across government health entities
+## UAE Privacy Mesh  -  privacy-preserving analytics across government health entities
 
 Three emirate health authorities hold heart-screening records of **synthetic citizens**
 (calibrated on the public UCI *Heart Disease* dataset). They are **not allowed to share raw
-records** — instead each entity trains a local model and shares only protected parameter
+records**  -  instead each entity trains a local model and shares only protected parameter
 updates with the aggregator.
 
 Select an architecture and a privacy budget, run the experiment, then watch the red team try
@@ -45,21 +45,21 @@ def _metrics_df(record):
         ("Achieved ε per entity", "-" if not eps_per else ", ".join(f"{e:.2f}" for e in eps_per)),
         ("Noise multiplier σ per entity", "-" if not sig_per else ", ".join(f"{s:.2f}" for s in sig_per)),
         ("δ", f"{record['delta']:g}"),
-        ("— utility —", ""),
+        (" -  utility  - ", ""),
         ("Test accuracy" + spread, _fmt(record["acc"])),
         ("Test AUC", _fmt(record["auc"])),
         ("Training-set accuracy", _fmt(record.get("train_acc"))),
         ("Generalisation gap (train − test)", _fmt(record.get("gap"))),
-        ("— privacy risk —", ""),
+        (" -  privacy risk  - ", ""),
         ("Attack accuracy (50% = chance)", _fmt(record["attack_acc"])),
         ("Attack AUC (membership inference)" + spread, _fmt(record["attack_auc"])),
         ("Attack TPR @ 1% FPR (1% = chance)", _fmt(record.get("tpr_at_1pct_fpr"))),
         ("Attack candidate pool (balanced)", str(record["n_candidates"])),
-        ("— run —", ""),
+        (" -  run  - ", ""),
         ("Training records (all entities)", str(record["n_train"])),
         ("Aggregation rounds", str(record["rounds"])),
         ("Mean runtime per run", f"{record['time_s']} s"),
-        ("— attribute-inference attack (cholesterol) —", ""),
+        (" -  attribute-inference attack (cholesterol)  - ", ""),
         ("AIA MAE (lower = higher risk)",
          "-" if record.get("aia_mae") is None else _fmt(record.get("aia_mae"), 1) + " mg/dL"),
         ("AIA baseline MAE (population-prior guess)",
@@ -105,7 +105,7 @@ def _run_one(arch, eps, progress=gr.Progress()):
     rep = max((r["rep"] for r in group), default=-1) + 1
 
     def cb(frac, msg):
-        progress(frac, desc=f"run {rep + 1} — {msg}")
+        progress(frac, desc=f"run {rep + 1}  -  {msg}")
 
     try:
         exp.run_experiment(arch, eps, rep=rep, progress=cb)
@@ -130,7 +130,7 @@ def _sweep_all(progress=gr.Progress()):
     total = max(1, len(todo))
     for i, (arch, eps, rep) in enumerate(todo):
         def cb(frac, msg, arch=arch, eps=eps, rep=rep, i=i):
-            progress((i + frac) / total, f"[{arch} ε={eps}] run {rep + 1} — {msg}")
+            progress((i + frac) / total, f"[{arch} ε={eps}] run {rep + 1}  -  {msg}")
 
         exp.run_experiment(arch, eps, rep=rep, progress=cb)
     summaries = exp.config_summaries()

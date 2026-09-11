@@ -66,7 +66,7 @@ def tradeoff_figure(records, highlight_key=None):
                      ha="center", fontsize=9, color=COLOR_INK)
     ax1.set_ylabel("test accuracy", fontsize=10, color=COLOR_MUTED)
     ax1.set_ylim(min(accs) - 0.06, max(accs) + 0.055)
-    ax1.set_title("Model utility — higher is better", fontsize=11, color=COLOR_INK,
+    ax1.set_title("Model utility  -  higher is better", fontsize=11, color=COLOR_INK,
                   loc="left", pad=8)
     _tidy(ax1)
 
@@ -84,7 +84,7 @@ def tradeoff_figure(records, highlight_key=None):
                      ha="center", fontsize=9.5, color=COLOR_INK)
     ax2.set_ylabel("attack success rate", fontsize=10, color=COLOR_MUTED)
     ax2.set_ylim(47.5, max(atts) + 6)
-    ax2.set_title("Privacy risk — how often the attacker correctly identifies a member",
+    ax2.set_title("Privacy risk  -  how often the attacker correctly identifies a member",
                   fontsize=11, color=COLOR_INK, loc="left", pad=8)
     ax2.set_xticks(xs)
     ax2.set_xticklabels(ticks, fontsize=10, color=COLOR_INK)
@@ -97,7 +97,7 @@ def tradeoff_figure(records, highlight_key=None):
                             edgecolors=COLOR_INK, linewidths=1.8, zorder=6)
                 bars[i].set_edgecolor(COLOR_INK)
 
-    fig.suptitle("Privacy costs almost nothing here — until it does",
+    fig.suptitle("Privacy vs utility trade-off across six configurations",
                  fontsize=14, y=0.975, x=0.5, color=COLOR_INK)
     fig.text(0.5, 0.925,
              "Federated learning + DP-SGD across three UAE health authorities  ·  "
@@ -121,7 +121,7 @@ def roc_figure(record, reference=None):
     ax.plot([0, 1], [0, 1], color="#888888", lw=1, ls=":")
     ax.set_xlabel("false positive rate")
     ax.set_ylabel("true positive rate")
-    ax.set_title("Membership-inference attack — ROC curve")
+    ax.set_title("Membership-inference attack  -  ROC curve")
     ax.legend(loc="lower right", fontsize=9)
     fig.tight_layout()
     return fig
@@ -166,7 +166,7 @@ def curve_figure(record):
     ax.set_xlabel(xlabel)
     ax.set_ylabel("score")
     ax.set_ylim(0.4, 1.0)
-    ax.set_title(f"{record['arch_label']} — training progress")
+    ax.set_title(f"{record['arch_label']}  -  training progress")
     ax.legend(loc="lower right")
     fig.tight_layout()
     return fig
@@ -195,7 +195,7 @@ def aia_figure(record, reference=None):
                 label="perfect reconstruction")
     ax.set_xlabel("actual cholesterol (mg/dL)")
     ax.set_ylabel("inferred cholesterol (mg/dL)")
-    ax.set_title(f"Attribute-inference attack — MAE {record.get('aia_mae', 0):.1f} mg/dL",
+    ax.set_title(f"Attribute-inference attack  -  MAE {record.get('aia_mae', 0):.1f} mg/dL",
                  fontsize=11, color=COLOR_INK)
     ax.legend(loc="upper left", fontsize=8.5)
     _tidy(ax)

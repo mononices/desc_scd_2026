@@ -72,33 +72,13 @@ def print_summary(summaries):
     print()
 
 
-def run_walkthrough(fresh=False, quick=False):
-    from privacy_mesh import data
-    from privacy_mesh import walkthrough as wt
-
-    if fresh:
-        run_sweep(quick=quick, force=True)
-    summaries = exp.config_summaries()
-    if not summaries:
-        print("no cached results found.")
-        print("run one of:")
-        print("  python -m privacy_mesh.cli walkthrough --fresh          (full, ~10 min)")
-        print("  python -m privacy_mesh.cli walkthrough --fresh --quick  (reduced, ~2 min)")
-        return 1
-    wt.narrate(summaries, data.ensure_partitions())
-    return 0
-
-
 def main():
     parser = argparse.ArgumentParser(prog="privacy-mesh")
     sub = parser.add_subparsers(dest="cmd")
-    pw = sub.add_parser("prewarm", help="run all experiments (3 repeats each) and cache results")
+    pw = sub.add_parser("prewarm", help="run all experiments and cache results")
     pw.add_argument("--quick", action="store_true")
     pw.add_argument("--force", action="store_true")
-    wk = sub.add_parser("walkthrough", help="narrate the whole demonstration end to end")
-    wk.add_argument("--fresh", action="store_true", help="recompute instead of using the cache")
-    wk.add_argument("--quick", action="store_true", help="with --fresh, use reduced settings")
-    sv = sub.add_parser("serve", help="launch the gradio demo")
+    sv = sub.add_parser("serve", help="launch the Gradio demo")
     sv.add_argument("--host", default="0.0.0.0")
     sv.add_argument("--port", type=int, default=7860)
     sv.add_argument("--quick", action="store_true")
@@ -120,8 +100,6 @@ def _dispatch(parser, args):
         summaries = run_sweep(quick=args.quick, force=args.force)
         render_charts(summaries)
         print_summary(summaries)
-    elif args.cmd == "walkthrough":
-        return run_walkthrough(fresh=args.fresh, quick=args.quick)
     elif args.cmd == "serve":
         if not args.no_prewarm:
             print_summary(run_sweep(quick=args.quick))
