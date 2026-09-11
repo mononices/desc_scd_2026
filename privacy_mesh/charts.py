@@ -172,6 +172,37 @@ def curve_figure(record):
     return fig
 
 
+def aia_figure(record, reference=None):
+    fig, ax = plt.subplots(figsize=(6.6, 5.6))
+    true_vals = np.asarray(record.get("aia_true_sample", []))
+    pred_vals = np.asarray(record.get("aia_pred_sample", []))
+    all_vals = [true_vals, pred_vals]
+    if len(true_vals) > 0:
+        ax.scatter(true_vals, pred_vals, color=COLOR_ATTACK, alpha=0.7,
+                   label=f"{record['arch_label']} (MAE {record.get('aia_mae', 0):.1f})")
+    if reference is not None:
+        rtrue = np.asarray(reference.get("aia_true_sample", []))
+        rpred = np.asarray(reference.get("aia_pred_sample", []))
+        if len(rtrue) > 0:
+            ax.scatter(rtrue, rpred, color=COLOR_CENTRAL, alpha=0.35, marker="x",
+                       label=f"centralised baseline (MAE {reference.get('aia_mae', 0):.1f})")
+            all_vals += [rtrue, rpred]
+    nonempty = [v for v in all_vals if len(v) > 0]
+    if nonempty:
+        min_v = min(v.min() for v in nonempty)
+        max_v = max(v.max() for v in nonempty)
+        ax.plot([min_v, max_v], [min_v, max_v], color=COLOR_MUTED, ls="--",
+                label="perfect reconstruction")
+    ax.set_xlabel("actual cholesterol (mg/dL)")
+    ax.set_ylabel("inferred cholesterol (mg/dL)")
+    ax.set_title(f"Attribute-inference attack — MAE {record.get('aia_mae', 0):.1f} mg/dL",
+                 fontsize=11, color=COLOR_INK)
+    ax.legend(loc="upper left", fontsize=8.5)
+    _tidy(ax)
+    fig.tight_layout()
+    return fig
+
+
 def save_figure(fig, name):
     os.makedirs(CHART_DIR, exist_ok=True)
     path = os.path.join(CHART_DIR, name)

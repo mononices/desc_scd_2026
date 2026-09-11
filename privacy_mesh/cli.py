@@ -52,6 +52,7 @@ def render_charts(summaries):
         written.append(charts.save_figure(charts.roc_figure(rec, reference=central), f"roc_{key}.png"))
         written.append(charts.save_figure(charts.confidence_figure(rec, reference=central), f"conf_{key}.png"))
         written.append(charts.save_figure(charts.curve_figure(rec), f"curve_{key}.png"))
+        written.append(charts.save_figure(charts.aia_figure(rec, reference=central), f"aia_{key}.png"))
     print(f"wrote {len(written)} charts to {exp.CHART_DIR}")
     return written
 

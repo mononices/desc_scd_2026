@@ -59,6 +59,12 @@ def _metrics_df(record):
         ("Training records (all entities)", str(record["n_train"])),
         ("Aggregation rounds", str(record["rounds"])),
         ("Mean runtime per run", f"{record['time_s']} s"),
+        ("— attribute-inference attack (cholesterol) —", ""),
+        ("AIA MAE (lower = higher risk)",
+         "-" if record.get("aia_mae") is None else _fmt(record.get("aia_mae"), 1) + " mg/dL"),
+        ("AIA baseline MAE (population-prior guess)",
+         "-" if record.get("aia_baseline_mae") is None else _fmt(record.get("aia_baseline_mae"), 1) + " mg/dL"),
+        ("AIA leak score (0 = no leak, 1 = perfect recon.)", _fmt(record.get("aia_leak_score"), 3)),
     ]
     return pd.DataFrame(rows, columns=["metric", "value"])
 
@@ -78,6 +84,8 @@ def _render(summaries, highlight=None):
         files["conf"] = charts.save_figure(fig, f"conf_{highlight}.png")
         fig = charts.curve_figure(rec)
         files["curve"] = charts.save_figure(fig, f"curve_{highlight}.png")
+        fig = charts.aia_figure(rec, reference=central)
+        files["aia"] = charts.save_figure(fig, f"aia_{highlight}.png")
     return files
 
 
@@ -85,9 +93,9 @@ def _outputs(summaries, highlight):
     files = _render(summaries, highlight)
     out = [files["trade"]]
     if highlight and highlight in summaries:
-        out += [_metrics_df(summaries[highlight]), files["roc"], files["conf"], files["curve"]]
+        out += [_metrics_df(summaries[highlight]), files["roc"], files["conf"], files["curve"], files["aia"]]
     else:
-        out += [None, None, None, None]
+        out += [None, None, None, None, None]
     return out
 
 
@@ -171,12 +179,13 @@ def build_app():
             conf = gr.Image(label="members vs non-members confidence", type="filepath")
         with gr.Row():
             curve = gr.Image(label="training progress", type="filepath")
+            aia = gr.Image(label="attribute-inference attack (cholesterol)", type="filepath")
         run_btn.click(
             _run_experiment,
             inputs=[arch, eps],
-            outputs=[trade, metrics, roc, conf, curve],
+            outputs=[trade, metrics, roc, conf, curve, aia],
         )
-        sweep_btn.click(_sweep_all, outputs=[trade, metrics, roc, conf, curve])
+        sweep_btn.click(_sweep_all, outputs=[trade, metrics, roc, conf, curve, aia])
         arch.change(_epsilon_update, inputs=arch, outputs=eps)
     return demo
 

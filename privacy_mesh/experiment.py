@@ -149,6 +149,7 @@ def run_experiment(arch, eps=None, quick=False, progress=None, rep=0):
     )
     attack = attack_out["matched"]
     shifted = attack_out["shifted"]
+    aia = attack_out["aia"]
     elapsed = time.time() - t0
     base_key = result_key(arch, eps)
     key = record_key(arch, eps, rep)
@@ -189,6 +190,11 @@ def run_experiment(arch, eps=None, quick=False, progress=None, rep=0):
         "time_s": round(elapsed, 1),
         "seed": seed,
         "quick": quick,
+        "aia_mae": float(aia["aia_mae"]),
+        "aia_baseline_mae": float(aia["aia_baseline_mae"]),
+        "aia_leak_score": float(aia["aia_leak_score"]),
+        "aia_true_sample": aia["aia_true_sample"],
+        "aia_pred_sample": aia["aia_pred_sample"],
     }
     save_record(record)
     if progress:
@@ -246,7 +252,8 @@ def summarize(records):
     base["key"] = base["config"]
     fields = ("acc", "auc", "train_acc", "train_auc", "gap", "real_acc", "real_auc",
               "attack_auc", "attack_acc", "attack_auc_shifted",
-              "tpr_at_1pct_fpr", "tpr_at_01pct_fpr", "time_s")
+              "tpr_at_1pct_fpr", "tpr_at_01pct_fpr", "time_s",
+              "aia_mae", "aia_baseline_mae", "aia_leak_score")
     for field in fields:
         vals = [r[field] for r in records if field in r]
         if not vals:
@@ -265,6 +272,8 @@ def summarize(records):
     base["conf_members"] = records[0]["conf_members"]
     base["conf_nonmembers"] = records[0]["conf_nonmembers"]
     base["history"] = records[0]["history"]
+    base["aia_true_sample"] = records[0].get("aia_true_sample", [])
+    base["aia_pred_sample"] = records[0].get("aia_pred_sample", [])
     return base
 
 

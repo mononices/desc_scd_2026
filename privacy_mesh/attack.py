@@ -122,7 +122,73 @@ def run_attack(model, parts, mean, std, seed=0, n_members=900, n_nonmembers=900,
         slabel = np.concatenate([np.ones(len(sm_members)), np.zeros(len(sm_non))])
         ssm = _scores(model, to_matrix(sframe, mean, std), to_target(sframe))
         result["shifted"] = _run_attack_model(ssm, slabel, seed)
+    result["aia"] = run_attribute_inference(model, parts, mean, std, seed=seed)
     return result
+
+
+def run_attribute_inference(model, parts, mean, std, sensitive_col="chol",
+                             n_samples=250, grid_steps=50, seed=0):
+    """Attribute-inference attack: given everything about a training-set record
+    except one sensitive column, how well can an attacker recover it from the
+    model's confidence alone?
+
+    The attacker's prior comes from the public UCI reference cohort
+    (``parts["entities"]["real"]``), never from the true values being attacked -
+    otherwise the grid search would be handed the answer distribution and the
+    reported MAE/leak-score would look good regardless of what the model
+    actually leaks.
+    """
+    rng = np.random.default_rng(seed)
+    ents = parts["entities"]
+    all_members = pd.concat([ents[k]["train"] for k in ENTITY_KEYS], ignore_index=True)
+
+    sample_idx = rng.choice(len(all_members), size=min(n_samples, len(all_members)), replace=False)
+    target_df = all_members.iloc[sample_idx].copy()
+    true_vals = target_df[sensitive_col].to_numpy(dtype=np.float64)
+
+    ref_vals = ents["real"][sensitive_col].to_numpy(dtype=np.float64)
+    pop_mean, pop_std = float(np.mean(ref_vals)), float(np.std(ref_vals)) + 1e-8
+
+    # Grid must cover the true range being attacked, not just +/-3 std of the
+    # (independent) prior mean, or some individuals become unreachable no
+    # matter how much the model leaks.
+    min_v = max(100.0, min(pop_mean - 3 * pop_std, true_vals.min()))
+    max_v = min(450.0, max(pop_mean + 3 * pop_std, true_vals.max()))
+    grid_candidates = np.linspace(min_v, max_v, grid_steps)
+
+    inferred_vals = []
+    for i in range(len(target_df)):
+        row_df = pd.concat([target_df.iloc[[i]]] * len(grid_candidates), ignore_index=True)
+        row_df[sensitive_col] = grid_candidates
+
+        x_mat = to_matrix(row_df, mean, std)
+        y_true = to_target(row_df)[0]
+
+        z = logits(model, x_mat)
+        p = 1.0 / (1.0 + np.exp(-z))
+        conf = p if y_true == 1 else (1.0 - p)
+
+        # log-likelihood + log-prior (MAP estimate)
+        log_lh = np.log(np.clip(conf, 1e-12, 1.0))
+        log_prior = -0.5 * ((grid_candidates - pop_mean) / pop_std) ** 2
+        map_score = log_lh + log_prior
+
+        inferred_vals.append(grid_candidates[np.argmax(map_score)])
+
+    inferred_vals = np.array(inferred_vals)
+    mae = float(np.mean(np.abs(inferred_vals - true_vals)))
+    # Baseline: the best an attacker could do knowing only the reference
+    # population, not the true values of the people being attacked.
+    baseline_mae = float(np.mean(np.abs(np.median(ref_vals) - true_vals)))
+    leak_score = float(max(0.0, 1.0 - (mae / (baseline_mae + 1e-8))))
+
+    return {
+        "aia_mae": mae,
+        "aia_baseline_mae": baseline_mae,
+        "aia_leak_score": leak_score,
+        "aia_true_sample": true_vals[:50].tolist(),
+        "aia_pred_sample": inferred_vals[:50].tolist(),
+    }
 
 
 def pick_exemplar(verdicts):
