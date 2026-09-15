@@ -42,11 +42,11 @@ def evaluate(model, x_np, y_np, batch=1024):
 
 
 def train_central(x_train, y_train, x_test, y_test, epochs=35, batch=256, lr=0.05,
-                  seed=0, progress=None, eval_every=1):
+                  seed=0, progress=None, eval_every=1, weight_decay=0.0):
     torch.manual_seed(seed)
     np.random.seed(seed)
     model = RiskNet()
-    opt = torch.optim.SGD(model.parameters(), lr=lr, momentum=0.9)
+    opt = torch.optim.SGD(model.parameters(), lr=lr, momentum=0.9, weight_decay=weight_decay)
     loss_fn = nn.BCEWithLogitsLoss()
     ds = TensorDataset(torch.from_numpy(x_train), torch.from_numpy(y_train))
     loader = DataLoader(ds, batch_size=batch, shuffle=True)

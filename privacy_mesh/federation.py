@@ -11,7 +11,8 @@ from privacy_mesh.privacy import calibrate_sigma
 
 
 class _Client:
-    def __init__(self, x, y, batch, lr, rounds, local_epochs, clip, seed, eps, delta, idx):
+    def __init__(self, x, y, batch, lr, rounds, local_epochs, clip, seed, eps, delta, idx,
+                 weight_decay=0.0):
         self.n = len(x)
         loader_len = max(1, math.ceil(self.n / batch))
         self.sample_rate = 1.0 / loader_len
@@ -26,7 +27,9 @@ class _Client:
         self.model = RiskNet()
         self.state_model = self.model
         torch.manual_seed(seed + 1000 + idx)
-        self.optimizer = torch.optim.SGD(self.model.parameters(), lr=lr, momentum=0.9)
+        self.optimizer = torch.optim.SGD(
+            self.model.parameters(), lr=lr, momentum=0.9, weight_decay=weight_decay
+        )
         self.engine = None
         self.sigma = None
         if eps is not None:
@@ -34,7 +37,12 @@ class _Client:
                 eps, delta, self.sample_rate, self.steps_per_round * rounds
             )
             if self.sigma is None:
-                raise RuntimeError("noise calibration failed")
+                raise ValueError(
+                    f"cannot reach epsilon={eps:g} at delta={delta:g} for a client with "
+                    f"{self.n} records over {self.steps_per_round * rounds} DP-SGD steps: "
+                    "the required noise exceeds the calibration range. Raise epsilon, "
+                    "reduce rounds/local_epochs, or use a larger cohort."
+                )
             engine = PrivacyEngine()
             wrapped_model, wrapped_optimizer, dp_loader = engine.make_private(
                 module=self.model,
@@ -92,10 +100,12 @@ class _Client:
 
 
 def train_federated(entity_train, x_test, y_test, rounds=12, local_epochs=2, batch=256,
-                    lr=0.05, eps=None, delta=1e-5, clip=1.0, seed=0, progress=None):
+                    lr=0.05, eps=None, delta=1e-5, clip=1.0, seed=0, progress=None,
+                    weight_decay=0.0):
     torch.manual_seed(seed)
     clients = [
-        _Client(x, y, batch, lr, rounds, local_epochs, clip, seed, eps, delta, i)
+        _Client(x, y, batch, lr, rounds, local_epochs, clip, seed, eps, delta, i,
+                weight_decay=weight_decay)
         for i, (x, y) in enumerate(entity_train)
     ]
     counts = np.array([float(c.n) for c in clients], dtype=np.float64)
@@ -118,10 +128,16 @@ def train_federated(entity_train, x_test, y_test, rounds=12, local_epochs=2, bat
             progress((r + 1) / rounds, f"round {r + 1}/{rounds} done - test accuracy {acc:.3f}")
     epsilons = [c.report(delta) for c in clients]
     epsilons = [e for e in epsilons if e is not None]
+    sigmas = [c.sigma for c in clients if c.sigma is not None]
     return {
         "model": global_model,
         "history": history,
         "eps_achieved": float(max(epsilons)) if epsilons else None,
         "eps_mean": float(np.mean(epsilons)) if epsilons else None,
-        "sigma": clients[0].sigma,
+        "eps_per_client": [float(e) for e in epsilons],
+        "sigma": float(max(sigmas)) if sigmas else None,
+        "sigma_per_client": [float(s) for s in sigmas],
+        "client_sizes": [int(c.n) for c in clients],
+        "steps_per_round": [int(c.steps_per_round) for c in clients],
+        "total_steps": [int(c.steps_per_round) * rounds for c in clients],
     }

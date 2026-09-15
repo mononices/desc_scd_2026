@@ -4,6 +4,7 @@ import os
 import time
 
 import numpy as np
+import pandas as pd
 import torch
 
 from privacy_mesh import attack as atk
@@ -12,7 +13,6 @@ from privacy_mesh import federation, model as mdl
 
 ROOT = data.ROOT
 RESULTS_DIR = os.path.join(ROOT, "results")
-MODEL_DIR = os.path.join(RESULTS_DIR, "models")
 CHART_DIR = os.path.join(RESULTS_DIR, "charts")
 
 DELTA = 1e-5
@@ -22,17 +22,34 @@ BATCH = 128
 LR = 0.05
 CENTRAL_EPOCHS = 150
 CLIP = 1.0
-N_MEMBERS = 800
-N_NONMEMBERS = 1100
+N_MEMBERS = 1500
+N_NONMEMBERS = 1500
 EPSILON_OPTIONS = [8.0, 4.0, 2.0, 1.0]
 PREWARM_REPS = 3
-REP_SEED_GAP = 7919
+ATTACK_SEED_BASE = 20260911
+
+# L2 penalty used for the "regularised" baselines. These exist purely as a fairness
+# control: the plain centralised/federated runs use zero weight decay so the attack
+# demo has an unambiguously vulnerable target, but an unregularised baseline overstates
+# the accuracy DP gives up, since a sane deployment would apply at least basic L2
+# regularisation even without a formal privacy guarantee. Comparing DP against both the
+# unregularised and the regularised baseline isolates what DP buys beyond "just add L2".
+WEIGHT_DECAY = 1e-3
+
+# Bumping this forces every cached record without the current fields (e.g. AIA results,
+# or the regularised-baseline configs) to be treated as stale and recomputed rather than
+# silently reused, so `prewarm --force` -- or even a plain re-run -- can't serve numbers
+# from before a schema change.
+CACHE_SCHEMA = 3
 
 ARCH_LABELS = {
-    "centralized": "Centralised (data pooled)",
-    "federated": "Federated (FedAvg)",
+    "centralized": "Centralised (pooled, unregularised)",
+    "centralized_reg": "Centralised (pooled, L2-regularised)",
+    "federated": "Federated (FedAvg, unregularised)",
+    "federated_reg": "Federated (FedAvg, L2-regularised)",
     "fed_dp": "Federated + DP-SGD",
 }
+REGULARIZED_ARCHS = {"centralized_reg", "federated_reg"}
 
 
 def result_key(arch, eps=None):
@@ -49,14 +66,32 @@ def run_seed(arch, eps, rep=0):
     return int(hashlib.sha1(raw.encode()).hexdigest(), 16) % (2 ** 31)
 
 
+def attack_seed(rep=0):
+    return ATTACK_SEED_BASE + rep
+
+
+def _thin(arr, keep=400, digits=5):
+    a = np.asarray(arr, dtype=float)
+    if len(a) > keep:
+        idx = np.unique(np.linspace(0, len(a) - 1, keep).round().astype(int))
+        a = a[idx]
+    return [round(float(v), digits) for v in a]
+
+
+def _verdict_records(verdicts):
+    return [
+        {"id": r.citizen_id, "truth": int(r.truth), "prob": round(float(r.attack_prob), 5)}
+        for r in verdicts.itertuples()
+    ]
+
+
 def _entity_matrices(parts, mean, std):
     ents = parts["entities"]
     out = []
     for key in data.ENTITY_KEYS:
         tr = ents[key]["train"]
         out.append((data.to_matrix(tr, mean, std), data.to_target(tr)))
-    test = [ents[k]["test"] for k in data.ENTITY_KEYS]
-    pool = test[0]._append(test[1:], ignore_index=True)
+    pool = pd.concat([ents[k]["test"] for k in data.ENTITY_KEYS], ignore_index=True)
     return out, data.to_matrix(pool, mean, std), data.to_target(pool)
 
 
@@ -68,6 +103,7 @@ def run_experiment(arch, eps=None, quick=False, progress=None, rep=0):
         cfg.update(rounds=4, central_epochs=40, n_members=300, n_nonmembers=400)
     if eps is not None and arch != "fed_dp":
         eps = None
+    weight_decay = WEIGHT_DECAY if arch in REGULARIZED_ARCHS else 0.0
     parts = data.ensure_partitions()
     entity_train, x_test, y_test = _entity_matrices(parts, parts["mean"], parts["std"])
     real_df = parts["entities"]["real"]
@@ -79,7 +115,8 @@ def run_experiment(arch, eps=None, quick=False, progress=None, rep=0):
     t0 = time.time()
     eps_achieved = None
     sigma = None
-    if arch == "centralized":
+    fed_detail = {}
+    if arch in ("centralized", "centralized_reg"):
         x_all = np.vstack([x for x, _ in entity_train])
         y_all = np.concatenate([y for _, y in entity_train])
 
@@ -90,7 +127,7 @@ def run_experiment(arch, eps=None, quick=False, progress=None, rep=0):
         model, history = mdl.train_central(
             x_all, y_all, x_test, y_test,
             epochs=cfg["central_epochs"], batch=cfg["batch"], lr=cfg["lr"],
-            seed=seed, progress=cb,
+            seed=seed, progress=cb, weight_decay=weight_decay,
         )
         n_train = len(x_all)
         rounds = cfg["central_epochs"]
@@ -103,56 +140,83 @@ def run_experiment(arch, eps=None, quick=False, progress=None, rep=0):
             entity_train, x_test, y_test,
             rounds=cfg["rounds"], local_epochs=cfg["local_epochs"],
             batch=cfg["batch"], lr=cfg["lr"], eps=eps, delta=DELTA,
-            clip=CLIP, seed=seed, progress=cb,
+            clip=CLIP, seed=seed, progress=cb, weight_decay=weight_decay,
         )
         model = res["model"]
         history = res["history"]
         eps_achieved = res["eps_achieved"]
         sigma = res["sigma"]
+        fed_detail = {
+            "eps_per_client": res["eps_per_client"],
+            "sigma_per_client": res["sigma_per_client"],
+            "client_sizes": res["client_sizes"],
+            "steps_per_round": res.get("steps_per_round"),
+            "total_steps": res.get("total_steps"),
+        }
         n_train = sum(len(x) for x, _ in entity_train)
         rounds = cfg["rounds"]
     acc, auc = mdl.evaluate(model, x_test, y_test)
     real_acc, real_auc = mdl.evaluate(model, x_real, y_real)
+    x_train_all = np.vstack([x for x, _ in entity_train])
+    y_train_all = np.concatenate([y for _, y in entity_train])
+    train_acc, train_auc = mdl.evaluate(model, x_train_all, y_train_all)
     if progress:
         progress(0.82, "launching membership-inference attack")
-    attack = atk.run_attack(
+    a_seed = attack_seed(rep)
+    attack_out = atk.run_attack(
         model, parts, parts["mean"], parts["std"],
-        seed=0, n_members=cfg["n_members"], n_nonmembers=cfg["n_nonmembers"],
-    )["full"]
+        seed=a_seed, n_members=cfg["n_members"], n_nonmembers=cfg["n_nonmembers"],
+    )
+    attack = attack_out["matched"]
+    shifted = attack_out["shifted"]
+    aia = attack_out["aia"]
     elapsed = time.time() - t0
-    os.makedirs(MODEL_DIR, exist_ok=True)
     base_key = result_key(arch, eps)
     key = record_key(arch, eps, rep)
-    model_file = f"{key}.pt"
-    torch.save(model.state_dict(), os.path.join(MODEL_DIR, model_file))
     record = {
+        "schema": CACHE_SCHEMA,
         "key": key,
         "config": base_key,
         "rep": rep,
         "arch": arch,
         "arch_label": ARCH_LABELS[arch],
+        "weight_decay": weight_decay,
         "eps_target": eps,
         "eps_achieved": eps_achieved,
         "sigma": sigma,
         "delta": DELTA,
+        **fed_detail,
         "acc": float(acc),
         "auc": float(auc),
+        "train_acc": float(train_acc),
+        "train_auc": float(train_auc),
+        "gap": float(train_acc - acc),
         "real_acc": float(real_acc),
         "real_auc": float(real_auc),
         "attack_auc": float(attack["attack_auc"]),
         "attack_acc": float(attack["attack_acc"]),
+        "tpr_at_1pct_fpr": float(attack["tpr_at_fpr_0.01"]),
+        "tpr_at_01pct_fpr": float(attack["tpr_at_fpr_0.001"]),
+        "attack_auc_shifted": float(shifted["attack_auc"]),
         "n_candidates": int(attack["n_candidates"]),
-        "roc_fpr": attack["roc_fpr"].tolist(),
-        "roc_tpr": attack["roc_tpr"].tolist(),
-        "conf_members": attack["conf_members"].tolist(),
-        "conf_nonmembers": attack["conf_nonmembers"].tolist(),
+        "n_eval": int(attack["n_eval"]),
+        "attack_seed": a_seed,
+        "roc_fpr": _thin(attack["roc_fpr"]),
+        "roc_tpr": _thin(attack["roc_tpr"]),
+        "conf_members": _thin(attack["conf_members"], keep=750, digits=4),
+        "conf_nonmembers": _thin(attack["conf_nonmembers"], keep=750, digits=4),
+        "verdicts": _verdict_records(attack["verdicts"]),
         "n_train": n_train,
         "rounds": rounds,
         "history": history,
         "time_s": round(elapsed, 1),
         "seed": seed,
-        "model_file": model_file,
         "quick": quick,
+        "aia_mae": float(aia["aia_mae"]),
+        "aia_baseline_mae": float(aia["aia_baseline_mae"]),
+        "aia_leak_score": float(aia["aia_leak_score"]),
+        "aia_true_sample": aia["aia_true_sample"],
+        "aia_pred_sample": aia["aia_pred_sample"],
     }
     save_record(record)
     if progress:
@@ -168,9 +232,16 @@ def load_records():
     path = results_path()
     if not os.path.exists(path):
         return {}
-    with open(path) as f:
-        items = json.load(f)
-    return {r["key"]: r for r in items}
+    try:
+        with open(path) as f:
+            items = json.load(f)
+        return {r["key"]: r for r in items if r.get("schema") == CACHE_SCHEMA}
+    except (json.JSONDecodeError, TypeError, KeyError):
+        backup = path + ".corrupt"
+        os.replace(path, backup)
+        print(f"warning: {path} was unreadable and has been moved to {backup}.")
+        print("re-run with --fresh to rebuild the cache.")
+        return {}
 
 
 def save_record(record):
@@ -187,9 +258,12 @@ def group_records(records=None):
     groups = {}
     for rec in records.values():
         groups.setdefault(rec["config"], []).append(rec)
-    for g in groups.values():
-        g.sort(key=lambda r: r["rep"])
-    return groups
+    out = {}
+    for cfg, g in groups.items():
+        full = [r for r in g if not r.get("quick")]
+        keep = full if full else g
+        out[cfg] = sorted(keep, key=lambda r: r["rep"])
+    return out
 
 
 def summarize(records):
@@ -198,8 +272,14 @@ def summarize(records):
     base["n_reps"] = n
     base["rep"] = -1
     base["key"] = base["config"]
-    for field in ("acc", "auc", "real_acc", "real_auc", "attack_auc", "attack_acc", "time_s"):
-        vals = [r[field] for r in records]
+    fields = ("acc", "auc", "train_acc", "train_auc", "gap", "real_acc", "real_auc",
+              "attack_auc", "attack_acc", "attack_auc_shifted",
+              "tpr_at_1pct_fpr", "tpr_at_01pct_fpr", "time_s",
+              "aia_mae", "aia_baseline_mae", "aia_leak_score")
+    for field in fields:
+        vals = [r[field] for r in records if field in r]
+        if not vals:
+            continue
         base[f"{field}_std"] = float(np.std(vals)) if n > 1 else 0.0
         base[field] = float(np.mean(vals))
     eps_vals = [r["eps_achieved"] for r in records if r["eps_achieved"] is not None]
@@ -214,6 +294,8 @@ def summarize(records):
     base["conf_members"] = records[0]["conf_members"]
     base["conf_nonmembers"] = records[0]["conf_nonmembers"]
     base["history"] = records[0]["history"]
+    base["aia_true_sample"] = records[0].get("aia_true_sample", [])
+    base["aia_pred_sample"] = records[0].get("aia_pred_sample", [])
     return base
 
 
@@ -222,7 +304,12 @@ def config_summaries():
 
 
 def sweep_configs():
-    cfgs = [("centralized", None), ("federated", None)]
+    cfgs = [
+        ("centralized", None),
+        ("centralized_reg", None),
+        ("federated", None),
+        ("federated_reg", None),
+    ]
     for e in EPSILON_OPTIONS:
         cfgs.append(("fed_dp", e))
     return cfgs
