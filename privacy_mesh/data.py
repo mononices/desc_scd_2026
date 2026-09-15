@@ -4,7 +4,6 @@ import os
 
 import numpy as np
 import pandas as pd
-from faker import Faker
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
@@ -20,6 +19,31 @@ MULTI = ["cp", "restecg", "slope", "ca", "thal"]
 FEATURES = CONT + BINARY + MULTI
 TARGET = "num"
 
+GIVEN_NAMES_M = [
+    "Ahmed", "Mohammed", "Khalid", "Saeed", "Rashid", "Hamdan", "Sultan", "Omar",
+    "Abdullah", "Faisal", "Tariq", "Yousef", "Majid", "Nasser", "Salem", "Hassan",
+    "Ali", "Mansour", "Zayed", "Juma", "Obaid", "Marwan", "Waleed", "Adel",
+]
+GIVEN_NAMES_F = [
+    "Fatima", "Aisha", "Mariam", "Noura", "Hessa", "Latifa", "Shamma", "Alia",
+    "Maitha", "Sara", "Amna", "Reem", "Salama", "Moza", "Wadeema", "Hind",
+    "Khawla", "Budour", "Dana", "Shaikha", "Asma", "Rawda", "Muna", "Yasmin",
+]
+FAMILY_NAMES = [
+    "Al Mansoori", "Al Nuaimi", "Al Marzooqi", "Al Shamsi", "Al Zaabi", "Al Hammadi",
+    "Al Suwaidi", "Al Ketbi", "Al Dhaheri", "Al Blooshi", "Al Falasi", "Al Qubaisi",
+    "Al Rumaithi", "Al Ameri", "Al Kaabi", "Al Mazrouei", "Al Hosani", "Al Khoori",
+    "Al Naqbi", "Al Sharqi", "Al Awadhi", "Al Raisi", "Al Balushi", "Al Jaberi",
+]
+
+CAT_LEVELS = {
+    "cp": [1, 2, 3, 4],
+    "restecg": [0, 1, 2],
+    "slope": [1, 2, 3],
+    "ca": [0, 1, 2, 3],
+    "thal": [3, 6, 7],
+}
+
 ENTITY_KEYS = ["abu_dhabi", "dubai", "sharjah"]
 ENTITY_LABELS = {
     "abu_dhabi": "Abu Dhabi Health",
@@ -33,16 +57,16 @@ REGIONS = {
 }
 ENTITY_PARAMS = {
     "abu_dhabi": {
-        "size": 900, "age_shift": 2.5, "chol_shift": 4.0, "thalach_shift": -3.0,
-        "male_p": 0.70, "intercept_shift": 0.30, "seed": 1001,
+        "size": 900, "holdout": 600, "age_shift": 2.5, "chol_shift": 4.0,
+        "thalach_shift": -3.0, "male_p": 0.70, "intercept_shift": 0.30, "seed": 1001,
     },
     "dubai": {
-        "size": 900, "age_shift": -3.5, "chol_shift": 9.0, "thalach_shift": 4.0,
-        "male_p": 0.62, "intercept_shift": -0.30, "seed": 1002,
+        "size": 900, "holdout": 600, "age_shift": -3.5, "chol_shift": 9.0,
+        "thalach_shift": 4.0, "male_p": 0.62, "intercept_shift": -0.30, "seed": 1002,
     },
     "sharjah": {
-        "size": 750, "age_shift": 0.0, "chol_shift": -7.0, "thalach_shift": 0.0,
-        "male_p": 0.66, "intercept_shift": -0.05, "seed": 1003,
+        "size": 750, "holdout": 500, "age_shift": 0.0, "chol_shift": -7.0,
+        "thalach_shift": 0.0, "male_p": 0.66, "intercept_shift": -0.05, "seed": 1003,
     },
 }
 EXTERNAL_PARAMS = {
@@ -52,6 +76,7 @@ EXTERNAL_PARAMS = {
 }
 TEST_FRAC = 0.15
 GLOBAL_SEED = 0
+DATA_VERSION = 2
 
 
 def _stats(df):
@@ -90,12 +115,7 @@ def _sample_stats(stats, n, rng):
 
 
 def _cat_columns():
-    cols = []
-    stats = _stats(pd.read_csv(REAL_CSV))
-    for c in MULTI:
-        for k in sorted(stats[c], key=int):
-            cols.append(f"{c}_{k}")
-    return cols
+    return [f"{c}_{k}" for c in MULTI for k in CAT_LEVELS[c]]
 
 
 CAT_COLUMNS = _cat_columns()
@@ -107,16 +127,15 @@ def _design_matrix(df):
     for c in CONT + BINARY:
         parts.append(df[c].to_numpy(dtype=np.float64))
     for c in MULTI:
-        col = df[c].to_numpy()
-        prefix = f"{c}_"
-        cats = [cc for cc in CAT_COLUMNS if cc.startswith(prefix)]
-        for cc in cats:
-            parts.append((col == int(cc.split("_")[1])).astype(np.float64))
+        col = df[c].to_numpy(dtype=float)
+        for k in CAT_LEVELS[c]:
+            parts.append((col == k).astype(np.float64))
     return np.stack(parts, axis=1)
 
 
 def _config_hash():
-    cfg = {"entities": ENTITY_PARAMS, "external": EXTERNAL_PARAMS, "test_frac": TEST_FRAC, "seed": GLOBAL_SEED}
+    cfg = {"entities": ENTITY_PARAMS, "external": EXTERNAL_PARAMS, "test_frac": TEST_FRAC,
+           "seed": GLOBAL_SEED, "version": DATA_VERSION}
     return hashlib.sha1(json.dumps(cfg, sort_keys=True).encode()).hexdigest()[:10]
 
 
@@ -128,8 +147,16 @@ def _normed_lr(df):
     return sc, lr
 
 
-def _sample_entity(key, params, stats, lr, sc, entity_index, fake):
-    n = params["size"]
+def _names(sex, rng):
+    given_m = rng.choice(GIVEN_NAMES_M, size=len(sex))
+    given_f = rng.choice(GIVEN_NAMES_F, size=len(sex))
+    family = rng.choice(FAMILY_NAMES, size=len(sex))
+    given = np.where(sex == 1, given_m, given_f)
+    return [f"{g} {f}" for g, f in zip(given, family)]
+
+
+def _sample_entity(key, params, stats, lr, sc, entity_index):
+    n = params["size"] + params.get("holdout", 0)
     rng = np.random.default_rng(params["seed"] + GLOBAL_SEED)
     data = _sample_stats(stats, n, rng)
     data["age"] = np.clip(data["age"] + params["age_shift"], 29, 80)
@@ -153,7 +180,7 @@ def _sample_entity(key, params, stats, lr, sc, entity_index, fake):
     df["region"] = rng.choice(names, size=n, p=weights)
     prefix = "EXT" if key == "external" else key[:2].upper()
     df["citizen_id"] = [f"{prefix}-{entity_index:02d}-{i:06d}" for i in range(n)]
-    df["citizen_name"] = [fake.name() for _ in range(n)]
+    df["citizen_name"] = _names(df["sex"].to_numpy(), rng)
     df["entity"] = key
     cols = ["citizen_id", "citizen_name", "entity", "region"] + FEATURES + [TARGET]
     return df[cols]
@@ -164,28 +191,43 @@ def ensure_partitions(force=False):
     meta_path = os.path.join(PART_DIR, "meta.json")
     cur_hash = _config_hash()
     if not force and os.path.exists(meta_path):
-        with open(meta_path) as f:
-            meta = json.load(f)
-        if meta.get("hash") == cur_hash:
-            return _load_partitions(meta)
+        try:
+            with open(meta_path) as f:
+                meta = json.load(f)
+            if meta.get("hash") == cur_hash:
+                return _load_partitions(meta)
+        except (json.JSONDecodeError, OSError, KeyError, ValueError):
+            pass
+    if not os.path.exists(REAL_CSV):
+        raise FileNotFoundError(
+            f"reference cohort missing: {REAL_CSV}\n"
+            "The UCI heart-disease CSV ships with this repository; restore it from the "
+            "submission bundle or re-clone before running."
+        )
     real = pd.read_csv(REAL_CSV)
     stats = _stats(real)
     sc, lr = _normed_lr(real)
     partitions = {}
-    fake = Faker()
-    Faker.seed(GLOBAL_SEED)
     ei = 0
     for key in ENTITY_KEYS:
-        df = _sample_entity(key, ENTITY_PARAMS[key], stats, lr, sc, ei, fake)
+        params = ENTITY_PARAMS[key]
+        df = _sample_entity(key, params, stats, lr, sc, ei)
         ei += 1
-        train, test = train_test_split(
-            df, test_size=TEST_FRAC, random_state=GLOBAL_SEED + ENTITY_PARAMS[key]["seed"],
-            stratify=df[TARGET],
+        seed = GLOBAL_SEED + params["seed"]
+        enrolled, holdout = train_test_split(
+            df, test_size=params["holdout"], random_state=seed, stratify=df[TARGET],
         )
-        partitions[key] = {"train": train.reset_index(drop=True), "test": test.reset_index(drop=True)}
-        train.to_csv(os.path.join(PART_DIR, f"{key}_train.csv"), index=False)
-        test.to_csv(os.path.join(PART_DIR, f"{key}_test.csv"), index=False)
-    ext = _sample_entity("external", EXTERNAL_PARAMS, stats, lr, sc, 99, fake)
+        train, test = train_test_split(
+            enrolled, test_size=TEST_FRAC, random_state=seed, stratify=enrolled[TARGET],
+        )
+        partitions[key] = {
+            "train": train.reset_index(drop=True),
+            "test": test.reset_index(drop=True),
+            "holdout": holdout.reset_index(drop=True),
+        }
+        for split, part in partitions[key].items():
+            part.to_csv(os.path.join(PART_DIR, f"{key}_{split}.csv"), index=False)
+    ext = _sample_entity("external", EXTERNAL_PARAMS, stats, lr, sc, 99)
     partitions["external"] = ext.reset_index(drop=True)
     ext.to_csv(os.path.join(PART_DIR, "external.csv"), index=False)
     meta = {
@@ -204,9 +246,10 @@ def ensure_partitions(force=False):
 def _load_partitions(meta):
     parts = {}
     for key in ENTITY_KEYS:
-        train = pd.read_csv(os.path.join(PART_DIR, f"{key}_train.csv"))
-        test = pd.read_csv(os.path.join(PART_DIR, f"{key}_test.csv"))
-        parts[key] = {"train": train, "test": test}
+        parts[key] = {
+            split: pd.read_csv(os.path.join(PART_DIR, f"{key}_{split}.csv"))
+            for split in ("train", "test", "holdout")
+        }
     parts["external"] = pd.read_csv(os.path.join(PART_DIR, "external.csv"))
     real = pd.read_csv(REAL_CSV)
     parts["real"] = real
